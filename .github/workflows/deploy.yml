@@ -1,0 +1,71 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Enable Swap Memory on EC2
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: "30s"
+          script: |
+            if [ ! -f /swapfile ]; then
+              sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+            fi
+            sudo swapon /swapfile
+            free -h
+
+      - name: Deploy to EC2 via SSH
+        env:
+          HOST: ${{ vars.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+          PAT_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          ssh -o StrictHostKeyChecking=no $USER@$HOST << EOF
+            set -e
+
+            cd ~/my-react-app 
+
+          
+            git remote set-url origin https://$PAT_TOKEN@github.com/Kowsicanandd/react-landing-app.git
+
+            git pull origin main
+
+            cd tailwind-landing-page-template-main
+
+            # Clear old Next.js build cache to force fresh update
+            rm -rf .next
+
+            npm install
+
+            NODE_OPTIONS="--max-old-space-size=512" npm run build
+
+            pm2 restart tailwind-landing || pm2 start npm --name "tailwind-landing" -- start
+
+            pm2 save
+          EOF
+
+      - name: Display Live Website URL
+        env:
+          HOST: ${{ vars.EC2_HOST }}
+        run: |
+          echo "Deployment completed successfully!"
+          echo "Live Website: http://$HOST"
